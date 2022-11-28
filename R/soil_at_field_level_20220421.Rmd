@@ -1,0 +1,168 @@
+---
+title: "soil_at_field_level"
+author: "Luke Salvato"
+date: "9/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(sf)
+library(sp)
+library(rgeos)
+library(tidyverse)
+```
+
+#get crops data sets
+```{r}
+crops <- st_read("/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/rice_area/reclassified_CDL/data/2007_to_2021_rice_area_fields_and_crops_20220413.geojson")%>% 
+  st_zm() %>% 
+  st_as_sf() %>% 
+  st_make_valid() 
+  
+
+"/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/soils/data/07_to_21_CDL_reclassifed_20220726.csv"
+
+#crop_change <-st_read("/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/rice_area/data/processed/CDL_reclass_change_detection_20210927.geojson") %>% 
+#st_transform(crs = st_crs(crops)) %>% 
+ # st_zm() %>% 
+#  st_as_sf() %>% 
+ # st_make_valid()
+
+
+```
+#Make fields sf
+```{r}
+#Get geometries, and objectid only
+fields <- crops %>% 
+  select(OBJECTID_1) %>% 
+  st_as_sf()
+
+#This as some hacks to clean up spatial boundaries, they didn't seem to make a difference in my process.
+#  as_Spatial() %>%
+ # gSimplify(., tol = 0.00001) %>% 
+#  gBuffer(., byid=TRUE, width = 0) %>% 
+ # st_as_sf()
+
+```
+
+
+
+
+
+#GET SOIL
+Do area weighted average at field level for numeric soil properties
+plot at field level
+```{r get soil}
+# Summary ----
+
+#soil <- st_read("/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/soils/data/all_counties_ssurgo_20210922.geojson") %>% st_as_sf()
+soil <- st_read("/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/soils/data/all_counties_ssurgo_20220209.geojson") %>% st_as_sf()
+
+soil_prop <- soil %>% dplyr::select(clay, sand, silt, om, cec, ph, ec, lep, sar, ksat.r_mean, ksat.r_min, ksat.r_max, ksat.l_mean, ksat.l_min, ksat.h_mean, ksat.h_max) %>% st_as_sf() %>% 
+  st_make_valid()
+
+#soil_prop %>% st_drop_geometry() %>% summarise(across(everything(), ~sum(is.na(.))))
+
+
+
+fields_soil_prop <- sf::st_interpolate_aw(x = st_make_valid(soil_prop), to = st_make_valid(fields), extensive = FALSE, na.rm = TRUE)
+
+fields_soil_prop %>% st_drop_geometry()%>% summarise(across(everything(), ~ sum(is.na(.))))
+
+#really should count the NAs in this
+
+
+
+fields_soil_prop_centroid <- fields_soil_prop %>%  st_centroid()
+
+#map <- ggplot() +  geom_sf(data = fields_soil_prop, aes(fill = clay), size = 0.00000005)
+#map
+```
+
+Join soil properties back to crops
+```{r}
+soil_crops <- fields_soil_prop_centroid %>% st_transform(crs = st_crs(crops)) %>% 
+  st_join(., crops, join = st_intersects, left = T )
+
+
+#for some reason ther are some duplicates, I'm still not totally sure what to do about these.
+investigate <- soil_crops %>% st_drop_geometry() %>%  group_by(OBJECTID_1) %>% tally() %>% filter(n > 1)
+#seems there are 62 fields of NAs as well (not bad out of 13,120 total fields)
+#try <- soil_crops %>% filter(OBJECTID_1 == 384286)
+#try <- soil_crops %>% filter(OBJECTID_1 == 283998)
+#try <- soil_crops %>% filter(OBJECTID_1 == 291855)
+#I do the group by and filter(row_number()==1) below to just take the first of each of the duplicates...
+
+soil_crops_clean <- soil_crops %>% 
+  as_tibble() %>% 
+  group_by(OBJECTID_1) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+drop_na(., c("clay")) %>% #there are a bunch of NAs in these columns, so I just drop those observations...
+  mutate(OBJECTID_1 = as_factor(OBJECTID_1)) %>% 
+  mutate_if(is.numeric, ~round(., 2))
+
+#I dropped only the rows that have NAs for every cell. There are still some NAs especially in pH column:
+soil_crops_clean %>% summarise(across(everything(), ~ sum(is.na(.)))) 
+
+str(soil_crops_clean)
+
+```
+
+#Get categorial soils data
+I may want to consider adding a few other categories. like parent material, etc
+can find the list of columns here:
+https://www.nrcs.usda.gov/wps/portal/nrcs/detail/soils/survey/geo/?cid=nrcs142p2_053631
+```{r}
+names(soil)
+soil_cat <- soil %>% 
+  dplyr::select(compname, drainagecl, reshard, reskind, restrictive_layer, taxorder, irrcapcl, farmlndcl, muacres, muname) %>%
+  as_tibble() %>% 
+  #apply(., 2, function(x) gsub("^$|^ $", NA, x)) %>% 
+   mutate(across(c("compname", "drainagecl", "reshard", "reskind", "restrictive_layer", "taxorder", "irrcapcl", "farmlndcl", "muacres", "muname"), ~ifelse(.=="", NA, as.character(.)))) %>%  #Some cells have an emply space in them, convert those to NA
+    st_as_sf() %>% 
+  st_transform(crs = st_crs(fields))
+  
+soil_cat_fields <- fields %>% 
+  st_centroid() %>% 
+    st_join(., soil_cat, join = st_intersects, left = T) %>% 
+  as_tibble() %>% 
+  mutate(OBJECTID_1 = as_factor(OBJECTID_1))
+
+
+nrow(soil_cat_fields)
+nrow(soil_crops_clean)
+
+#This is the final data set I'll use moving forward, it has crops for all years, numerical and categorical soils info, and centroids for each field
+soil_cat_num <- right_join(soil_cat_fields, soil_crops_clean) %>% 
+  group_by(OBJECTID_1) %>% 
+  filter(row_number()==1)
+
+
+#Used this to inspect the left join, which produces 12,991 rows (good) but 600 or so of them have NA for all crop years and all numeric soil properties. definitely seems like I want to use the right join ####SHOULD LOOK INTO THIS MORE! DROPPING 600 FIELDS!!
+#update, I now have 12,505 fields. still a lot of fields are dropped. i should look into this going forward.
+#try <- soil_cat_num %>% 
+ # filter(is.na(clay)) 
+##UPDATE: I think I figured this out, it's jsut that a lot of fields don't have soil data. I kept more of the NA's this time, buty removed the observations that have all NAs. I now have 12,839 fields!!
+
+
+```
+
+
+
+```{r}
+getwd()
+
+#st_write(soil_cat_num, "data/categorial_and_numeric_soil_data_at_field_level_20210928.geojson", delete_layer = TRUE)
+st_write(soil_cat_num, "/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/soils/data/categorial_and_numeric_soil_data_at_field_level_20220413.geojson", delete_layer = TRUE)
+```
+
+
+VISUALIZE SOILS
+```{r}
+soil_cat_num %>% 
+ggplot(aes( x = irrcapcl)) + geom_histogram(stat = "count")
+
+```
+
+
