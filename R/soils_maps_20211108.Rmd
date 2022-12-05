@@ -1,0 +1,110 @@
+---
+title: "Untitled"
+author: "Luke Salvato"
+date: "10/19/2021"
+output: html_document
+---
+
+```{r}
+library("randomForest")
+library("caret")
+library(sf)
+library(tidyverse)
+```
+
+```{r}
+getwd()
+soil <- st_read("/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/soils/data/categorial_and_numeric_soil_data_at_field_level_20210928.geojson") %>% st_as_sf()
+field_center <- soil %>% select(OBJECTID_1, geometry) %>% 
+  st_as_sf()
+### there should be only 12376 rows in this. double check that each time.
+
+crops <- st_read("/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/rice_area/data/processed/CDL_reclass_crop_type_07_to_19_20210927.geojson")%>% 
+  st_zm() %>% 
+  st_as_sf() %>% 
+  st_make_valid() 
+
+fields <- crops %>% 
+  select(OBJECTID_1) %>% 
+  st_as_sf()
+
+soil_fields <- st_join(fields, soil) %>% 
+  filter(clay != "NA") 
+
+str(soil_fields)
+```
+
+
+Make soils maps of rice field area
+go here for colors:
+http://derekogle.com/NCGraphing/resources/colors
+```{r}
+library(RColorBrewer)
+library("viridis")      
+
+clay <- soil_fields %>% ggplot()+ geom_sf(aes(fill = clay), size = 0.00000005)+
+  labs(fill = "% clay") +
+  theme_minimal()+
+  theme(legend.title = element_text(size=20),
+        legend.key.size = unit(1.5, 'cm'),
+        legend.text = element_text(size = 20))+
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major = element_line(color = "white"))
+clay
+ggsave(plot = clay, filename = "Dropbox/Mac (3)/Documents/Land_Use/soils/vis/clay_in_rice_fields_20211108.png")
+
+
+ksat <- soil_fields %>%  filter(ksat < 8) %>% ggplot()+ geom_sf(aes(fill = ksat), size = 0.00000005)+
+  labs(fill = "ksat (um/s)") +
+  scale_fill_continuous(low="blue", high="red")+
+  theme_minimal()+
+  theme(legend.title = element_text(size=20),
+        legend.key.size = unit(1.5, 'cm'),
+        legend.text = element_text(size = 20))+
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major = element_line(color = "white"))
+ksat
+ggsave(plot = ksat, filename = "Dropbox/Mac (3)/Documents/Land_Use/soils/vis/ksat_in_rice_fields_20211108.png")
+
+ph <- ggplot()+geom_sf(data = soil_fields, aes(fill = ph), size = 0.00000005)+
+labs(fill = "pH") +
+  scale_fill_continuous(low = "yellow", high = "darkblue")+
+  theme_minimal()+
+  theme(legend.title = element_text(size=20),
+        legend.key.size = unit(1.5, 'cm'),
+        legend.text = element_text(size = 20))+
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major = element_line(color = "white"))
+ggsave(plot = ph, filename = "Dropbox/Mac (3)/Documents/Land_Use/soils/vis/ph_in_rice_fields_20211108.png")
+
+ph
+
+```
+
+
+```{r}
+soil_fields %>% ggplot(aes(x = ksat))+geom_histogram()
+soil_fields %>% ggplot(aes(x = ec))+geom_histogram()
+soil_fields %>% ggplot(aes(x = om))+geom_histogram()
+```
+
+```{r}
+soil_total <- st_read("/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/soils/data/all_counties_ssurgo_20210922.geojson") %>% st_as_sf()
+clay_total <- ggplot()+geom_sf(data = soil_total, aes(fill = clay), size = 0.00000005)+
+labs(fill = "% clay") +
+  theme_minimal()+
+  theme(legend.title = element_text(size=20),
+        legend.key.size = unit(1.5, 'cm'),
+        legend.text = element_text(size = 20))
+clay_total
+
+getwd()
+ggsave(plot = clay_total, file = "Dropbox/Mac (3)/Documents/Land_Use/soils/vis/clay_total_20211108.png" )
+```
+
