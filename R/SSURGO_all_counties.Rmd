@@ -1,0 +1,327 @@
+---
+title: "SSURGO all counties"
+author: "Luke Salvato"
+date: "1/19/2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+library(FedData)
+library(sf)
+library(tidyverse)
+
+#create and save function
+not_all_na <- function(x) any(!is.na(x)) #for data cleaning
+
+getwd()
+```
+
+```{r}
+#Colusa County
+SSURGO.areas.011 <- get_ssurgo(template=c('CA011'), 
+                               label='CA_011')
+
+#Glen County
+SSURGO.areas.021 <- get_ssurgo(template=c('CA021'), 
+                               label='CA_021')
+
+#Solano County
+SSURGO.areas.095 <- get_ssurgo(template=c('CA095'), 
+                               label='CA_095')
+
+#Yolo County
+SSURGO.areas.113 <- get_ssurgo(template=c('CA113'), 
+                               label='CA_113')
+
+#Butte County
+SSURGO.areas.612 <- get_ssurgo(template=c('CA612'), 
+                               label='CA_612')
+getwd()
+
+
+#Sutter County
+SSURGO.areas.101 <- get_ssurgo(template=c('CA101'), 
+                              label='CA_101') #This one not working for some reason
+
+#Sacramento County
+SSURGO.areas.067 <- get_ssurgo(template=c('CA067'), 
+                              label='CA_067') #This one also is not working for some reason
+
+#Placer County
+SSURGO.areas.620 <- get_ssurgo(template=c('CA620'), 
+                               label='CA_620')
+
+#Yuba County
+SSURGO.areas.618 <- get_ssurgo(template=c('CA618'), 
+                               label='CA_618')
+
+#Tehema County
+SSURGO.areas.645 <- get_ssurgo(template=c('CA645'), 
+                               label='CA_645')
+```
+
+```{r}
+
+chorizon <- rbind(SSURGO.areas.011$tabular$chorizon, SSURGO.areas.021$tabular$chorizon, SSURGO.areas.095$tabular$chorizon, SSURGO.areas.113$tabular$chorizon, SSURGO.areas.612$tabular$chorizon, SSURGO.areas.101$tabular$chorizon, SSURGO.areas.067$tabular$chorizon, SSURGO.areas.620$tabular$chorizon, SSURGO.areas.618$tabular$chorizon, SSURGO.areas.645$tabular$chorizon)
+
+
+component <- rbind(SSURGO.areas.011$tabular$component, SSURGO.areas.021$tabular$component, SSURGO.areas.095$tabular$component, SSURGO.areas.113$tabular$component, SSURGO.areas.612$tabular$component, SSURGO.areas.101$tabular$component, SSURGO.areas.067$tabular$component, SSURGO.areas.620$tabular$component, SSURGO.areas.618$tabular$component, SSURGO.areas.645$tabular$component)
+
+
+mapunit <- rbind(SSURGO.areas.011$tabular$mapunit, SSURGO.areas.021$tabular$mapunit, SSURGO.areas.095$tabular$mapunit, SSURGO.areas.113$tabular$mapunit, SSURGO.areas.612$tabular$mapunit, SSURGO.areas.101$tabular$mapunit, SSURGO.areas.067$tabular$mapunit, SSURGO.areas.620$tabular$mapunit, SSURGO.areas.618$tabular$mapunit, SSURGO.areas.645$tabular$mapunit)
+
+corestrictions <- rbind(SSURGO.areas.011$tabular$corestrictions, SSURGO.areas.021$tabular$corestrictions, SSURGO.areas.095$tabular$corestrictions, SSURGO.areas.113$tabular$corestrictions, SSURGO.areas.612$tabular$corestrictions, SSURGO.areas.101$tabular$corestrictions, SSURGO.areas.067$tabular$corestrictions, SSURGO.areas.620$tabular$corestrictions, SSURGO.areas.618$tabular$corestrictions, SSURGO.areas.645$tabular$corestrictions)
+
+corestrictions %>% count(reskind)
+corestrictions %>% count(reshard)
+
+
+
+
+
+```
+
+
+Remove columns that have only NAs (using the function I built above)
+```{r}
+chorizon <- chorizon %>% 
+  select_if(not_all_na)
+component <- component %>% 
+  select_if(not_all_na)
+mapunit <- mapunit %>%
+  select_if(not_all_na)
+corestrictions <- corestrictions %>%
+  select_if(not_all_na)
+```
+
+Create a new dataframe that consists of the deepest horizon bottom for each cokey
+```{r}
+#deepest horizon bottom of each component
+depth <- chorizon %>%
+  group_by(cokey) %>%
+  summarise(total.depth = max(hzdepb.r))
+head(depth)
+
+#remove horizons that start below 30 cm
+chorizon <- chorizon %>%
+  filter(hzdept.r < 30) %>% 
+  droplevels()
+```
+
+Wil combine chorizon to the component based on cokey 
+We want only one observation per cokey for the join from chorizon data to component data
+(we will then combine component_horizon data to the mapunit data based on mukey)
+```{r}
+component_count <- chorizon %>%
+  group_by(cokey) %>%
+  summarize(count = n()) %>%
+  filter(count > 1)
+
+nrow(component_count)
+#there are 1972 compnents with more than one horizon layer in the first 30cm
+```
+
+Summarize characteristics of interest with a weighted mean of the horizons present
+```{r}
+#create a variable thick which will be used to relate the amount of soil in each horizon in each component
+chorizon_vars <- chorizon %>%
+  mutate(thick = ifelse(hzdepb.r > 30, 30 - hzdept.r, 
+                        hzdepb.r - hzdept.r)) %>% 
+  group_by(cokey) %>%
+  summarise(sand = round(weighted.mean(sandtotal.r, thick, na.rm = TRUE),2),
+            silt = round(weighted.mean(silttotal.r, thick, na.rm = TRUE),2),
+            clay = round(weighted.mean(claytotal.r, thick, na.rm = TRUE),2),
+            om = round(weighted.mean(om.r, thick, na.rm = TRUE),2),
+            k = round(weighted.mean(kffact, thick, na.rm = TRUE),2),
+            cec = round(weighted.mean(cec7.r, thick, na.rm = TRUE),2),
+            ph = round(weighted.mean(ph1to1h2o.r, thick),2),
+            ec = round(weighted.mean(ec.r, thick, na.rm = TRUE),2),
+            lep = round(weighted.mean(lep.r, thick, na.rm = TRUE),2),
+            sar = round(weighted.mean(sar.r, thick, na.rm = TRUE),2),
+            ksat.r_mean = round(weighted.mean(ksat.r, thick, na.rm = TRUE),2),
+            ksat.r_min = round(min(ksat.r, thick, na.rm = TRUE),2),
+            ksat.r_max = round(max(ksat.r, thick, na.rm = TRUE),2),
+            ksat.l_mean = round(weighted.mean(ksat.l, thick, na.rm = TRUE),2),
+            ksat.l_min = round(min(ksat.l, thick, na.rm = TRUE),2),
+            ksat.h_mean = round(weighted.mean(ksat.h, thick, na.rm = TRUE),2),
+            ksat.h_max = round(max(ksat.h, thick, na.rm = TRUE),2))
+            
+#now we have one observation per component for each of the important variables
+```
+
+```{r}
+chorizon_vars_depth <- left_join(chorizon_vars, depth, by = "cokey")
+head(chorizon)
+#Note: the row with all NAs is possibly data for a rock outcrop mapunit? can vie this later when we attach chorizon and component
+```
+
+```{r}
+#Inspect the column names of df 'component'
+length(colnames(component))
+colnames(component)
+```
+component data: column selection
+```{r}
+#use dplyr select to select the important columns
+component <- component %>%
+  dplyr::select(c(comppct.r, compname, majcompflag, slope.r, 
+                  slopelenusle.r, runoff, tfact, wei, weg, erocl, 
+                  elev.r, albedodry.r, airtempa.r, map.r, ffd.r, compname,
+                taxorder, irrcapcl,
+                  #cropprodindex, #for some reason this one doesn't exist in this data set
+                  taxpartsize, mukey, cokey, drainagecl)) %>% 
+  mutate(MUKEY = as.character(mukey))
+dim(component)
+```
+
+```{r}
+component_horizon <- left_join(component, chorizon_vars_depth, by = c("cokey")) #%>% 
+  
+
+component_horizon_corestrictions <- left_join(component_horizon,corestrictions, by = c("cokey"))
+dim(component_horizon_corestrictions)
+
+#joined and cleaned:
+head(component_horizon_corestrictions)
+```
+
+Mapunit data: column selection
+```{r}
+colnames(mapunit)
+
+mapunit <- mapunit %>%
+  dplyr::select(c(musym, muname, muacres, mukey, farmlndcl))#, county))
+
+```
+Join component_horizon with mapunit
+This time join using 'mukey' - get component level information for each mapunit
+recall that we will have some mapunits without data because there was no horizon level data
+```{r}
+full_soil <- left_join(component_horizon_corestrictions, mapunit, by = c("mukey"))
+full_soil <- full_soil %>%
+  mutate(muname = gsub(", ", "_", muname)) %>% 
+  mutate(MUKEY = as.character(mukey)) 
+  
+```
+
+
+
+
+Make area weighted average for each MUKEY
+```{r}
+awav <- full_soil %>% 
+  group_by(MUKEY) %>% 
+  summarise(sand = round(weighted.mean(sand, comppct.r, na.rm = TRUE),2),
+            silt = round(weighted.mean(silt, comppct.r, na.rm = TRUE),2),
+            clay = round(weighted.mean(clay, comppct.r, na.rm = TRUE),2),
+            om = round(weighted.mean(om, comppct.r, na.rm = TRUE),2),
+            k = round(weighted.mean(k, comppct.r, na.rm = TRUE),2),
+            cec = round(weighted.mean(cec, comppct.r, na.rm = TRUE),2),
+            ph = round(weighted.mean(ph, comppct.r, na.rm = TRUE),2),
+            lep = round(weighted.mean(lep, comppct.r, na.rm = TRUE),2),
+            sar = round(weighted.mean(sar, comppct.r, na.rm = TRUE),2),
+            ksat.r_mean = round(weighted.mean(ksat.r_mean, comppct.r, na.rm = TRUE),2),
+            ksat.r_min = round(weighted.mean(ksat.r_min, comppct.r, na.rm = TRUE),2),
+            ksat.r_max = round(weighted.mean(ksat.r_max, comppct.r, na.rm = TRUE),2),
+            ksat.l_mean = round(weighted.mean(ksat.l_mean, comppct.r, na.rm = TRUE),2),
+            ksat.l_min = round(weighted.mean(ksat.l_min, comppct.r, na.rm = TRUE),2),
+            ksat.h_mean = round(weighted.mean(ksat.h_mean, comppct.r, na.rm = TRUE),2),
+            ksat.h_max = round(weighted.mean(ksat.h_max, comppct.r, na.rm = TRUE),2),) %>% 
+  ungroup()
+
+
+
+names(awav)
+  
+``` 
+`
+```{r}
+lean_soil <- component_horizon_corestrictions %>% 
+  select(-c(sand, silt,clay,om,k,cec,ph,lep,sar,ksat.r_mean, ksat.r_min, ksat.r_max, ksat.l_mean, ksat.l_min, ksat.h_mean, ksat.h_max )) %>% 
+  right_join(mapunit, by = c("mukey")) %>% 
+  mutate(muname = gsub(", ", "_", muname)) %>% 
+  mutate(MUKEY = as.character(mukey)) %>% 
+  right_join(awav, by = "MUKEY") 
+  #left_join()
+  
+
+```
+
+Make a 'yes/no' label for restrictive layers
+Also tak eonly the most dominant component, using comppct.r (precent component )
+```{r}
+lean_soil_dominant_componant <- lean_soil %>% 
+  mutate(restrictive_layer = case_when(reshard == c("Indurated", "Strongly cemented", "Very strongly cemented") ~ "yes",
+                                       TRUE ~ "no")) %>% 
+  filter(majcompflag == "Yes") %>% 
+  group_by(mukey) %>% 
+  slice(which.max(comppct.r)) 
+
+  
+#lean_soil_dominant_componant %>% count(MUKEY)  
+#should be one of each mukey now
+```
+
+
+Now need to incorporate the spatial data, so that I can make maps
+Join full_soil with spatial data
+```{r}
+sf <- rbind(SSURGO.areas.011$spatial, SSURGO.areas.021$spatial, SSURGO.areas.095$spatial, SSURGO.areas.113$spatial, SSURGO.areas.612$spatial, SSURGO.areas.101$spatial, SSURGO.areas.067$spatial, SSURGO.areas.620$spatial, SSURGO.areas.618$spatial, SSURGO.areas.645$spatial) %>% 
+  st_as_sf() %>% 
+  mutate(MUKEY = as.character(MUKEY))%>% 
+ left_join(lean_soil_dominant_componant, by = "MUKEY") %>% 
+  filter(majcompflag == "Yes") %>% 
+  dplyr::select(MUKEY, comppct.r, compname, taxorder, farmlndcl, irrcapcl, cokey, drainagecl, total.depth, reskind,reshard, ec, sand, silt, clay, om, cec, ph, lep, sar, muacres, muname, restrictive_layer, ksat.r_mean, ksat.r_min, ksat.r_max, ksat.l_mean, ksat.l_min, ksat.h_mean, ksat.h_max )
+
+sf %>% as_tibble() %>% count(MUKEY)
+```
+
+```{r} 
+#Plot counties clay content
+ggplot() + geom_sf(data = sf, aes(fill = clay), size = 0.00000005)
+
+```
+Inspect NAs
+```{r}
+#Convert the sf object back to a tibble to inspect these NAs
+soil_tb <- sf %>% as_tibble()
+#count the NAs in each column, try to see where the NAs are
+where_NA <- map(soil_tb, ~sum(is.na(.)))
+glimpse(where_NA)
+
+
+
+#where the NAs are coming from? .
+library(janitor)
+where_na <- sf %>% 
+  as_tibble %>%
+  filter(is.na(clay)) %>% 
+  select(sand, silt, clay, compname) %>%
+  tabyl(clay, compname)
+where_na
+
+```
+
+Write the shape file
+```{r}
+getwd()
+#st_write(sf, "all_counties_ssurgo_may_18_2021.shp", delete_layer = TRUE)
+#st_write(sf, "all_counties_ssurgo_20210922.geojson")
+st_write(sf, "/Users/lukesalvato/Dropbox/Mac (3)/Documents/Land_Use/soils/data/all_counties_ssurgo_20220209.geojson", delete_layer = TRUE)
+```
+
+
+Plot to visualize ksat
+```{r}
+soil_tb %>% ggplot(aes(x = ksat.r_mean))+
+  geom_density()
+soil_tb %>% ggplot(aes(x = ksat.l_min))+
+  geom_density()
+
+soil_tb %>% ggplot(aes(x = lep))+
+  geom_density()
+soil_tb %>% ggplot(aes(x = sar))+
+  geom_density()
+```
+
